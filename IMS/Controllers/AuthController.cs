@@ -1,5 +1,7 @@
-﻿using IMS.Models;
+﻿using IMS.Data;
+using IMS.Models;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
@@ -12,22 +14,50 @@ namespace IMS.Controllers
     public class AuthController : ControllerBase
     {
         private readonly IConfiguration _config;
+        private readonly IMSContext _context;
 
-        public AuthController(IConfiguration config)
+        public AuthController(IConfiguration config, IMSContext context)
         {
             _config = config;
+            _context = context;
         }
 
         [HttpPost("login")]
-        public IActionResult Login([FromBody] User user)
+        public async Task<IActionResult> Login([FromBody] User loginRequest)
         {
-            // Dummy user validation (Replace with database validation)
-            if (user.Username == "admin" && user.Password == "password")
+            // Fetch user from database by username
+            var user = await _context.Users.FirstOrDefaultAsync(u => u.Username == loginRequest.Username);
+
+            if (user == null)
             {
-                var token = GenerateJwtToken(user.Username, "Admin");
-                return Ok(new { token });
+                return Unauthorized(new { message = "Invalid username or password." });
             }
-            return Unauthorized();
+
+            // Verify password using BCrypt
+            if (!BCrypt.Net.BCrypt.Verify(loginRequest.Password, user.Password))
+            {
+                return Unauthorized(new { message = "Invalid username or password." });
+            }
+
+            // Generate JWT token
+            var token = GenerateJwtToken(user.Username, user.Role);
+
+            return Ok(new { token });
+        }
+
+        [HttpPost]
+        public async Task<IActionResult> AddUser(User userDto)
+        {
+            var user = new User
+            {
+                Username = userDto.Username,
+                Password = BCrypt.Net.BCrypt.HashPassword(userDto.Password),
+                Role = userDto.Role
+            };
+
+            _context.Users.Add(user);
+            await _context.SaveChangesAsync();
+            return Ok(user);
         }
 
         private string GenerateJwtToken(string username, string role)
